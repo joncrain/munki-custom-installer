@@ -1,0 +1,121 @@
+#!/bin/bash
+
+function Usage() {
+cat <<-ENDOFMESSAGE
+
+Usage: $(basename "$0")
+    -r  --repo      munki repo url (SoftwareRepoURL)
+    -s  --source    source to original munki package
+    -m  --manifest  name of the default manifest or path to the directory containing multiple manifests
+    -o  --output    directory to output packages to (defaults to current)
+    -h  --help      show this help text
+
+    $(basename "$0") creates a customized Munki installer package containing
+    preconfigure SoftwareRepoURL and default manifest.
+
+ENDOFMESSAGE
+    exit 1
+}
+
+function Die() {
+    echo "$*"
+    Usage
+    exit 1
+}
+
+function GetOpts() {
+    repo=""
+    argv=()
+    if [ $# -lt 1 ]; then
+      Die "You must specify the options."
+    fi
+    while [ $# -gt 0 ]
+    do
+        opt=$1
+        shift
+        case ${opt} in
+            -h|--help)
+                Usage;;
+            -r|--repo)
+                if [ $# -eq 0 -o "${1:0:1}" = "-" ]; then
+                    Die "The ${opt} option requires an argument."
+                fi
+                repo="$1"
+                shift
+                ;;
+            -s|--source)
+                if [ $# -eq 0 -o "${1:0:1}" = "-" ]; then
+                    Die "The ${opt} option requires an argument."
+                fi
+                source="$1"
+                shift
+                ;;
+            -m|--manifest)
+                if [ $# -eq 0 -o "${1:0:1}" = "-" ]; then
+                    Die "The ${opt} option requires an argument."
+                fi
+                manifest="$1"
+                shift
+                ;;
+            -o|--output)
+                if [ $# -eq 0 -o "${1:0:1}" = "-" ]; then
+                    Die "The ${opt} option requires an argument."
+                fi
+                output="$1"
+                shift
+                ;;
+            *)
+                if [ "${opt:0:1}" = "-" ]; then
+                    Die "${opt}: unknown option."
+                fi
+                argv+=(${opt});;
+        esac
+    done
+}
+
+GetOpts $*
+
+function OptCheck() {
+  if [[ "$1" == "" ]]; then
+    Die "You must specify all options."
+  fi
+}
+
+OptCheck "${repo}"
+OptCheck "${source}"
+OptCheck "${manifest}"
+
+function CreateInstaller() {
+  current_dir=`pwd`
+  if [[ "$4" != "" ]]; then
+    cd $4
+  fi
+  output_dir=`pwd`
+  temp_dir="$output_dir"/expandcontent
+
+  # expand munki
+  /usr/sbin/pkgutil --expand $current_dir/"$3" $temp_dir
+
+  # get app path (without knowing the current app version)
+  cd $temp_dir/munkitools_app*
+  app_path=`pwd`
+
+  # Add lines
+  printf '\nsudo defaults write /Library/Preferences/ManagedInstalls.plist ClientIdentifier '$1 >> $app_path/Scripts/preinstall
+  printf '\nsudo defaults write /Library/Preferences/ManagedInstalls.plist SoftwareRepoURL '$2 >> $app_path/Scripts/preinstall
+
+  # flatten package
+  /usr/sbin/pkgutil --flatten $temp_dir "$output_dir"/munki-$1.pkg
+
+  # remove files
+  rm -Rf $temp_dir
+  cd $current_dir
+}
+
+if [ -d "$manifest" ]; then
+  for f in $manifest/*; do
+      CreateInstaller ${f##*/} $repo $source $output
+  done
+else
+  CreateInstaller $manifest $repo $source $output
+fi
